@@ -12,10 +12,10 @@ detector = FaceMeshDetector(maxFaces=1)
 # --- Face Thresholds & Counters ---
 EAR_THRESH = 0.3      
 MAR_THRESH = 0.3     
-PITCH_THRESH = 0.75   
+PITCH_THRESH = 0.5   
 ROLL_THRESH = 30     
-YAW_MIN = 0.45          
-YAW_MAX = 2.2          
+YAW_MIN = 0.5          
+YAW_MAX = 2.0       
 ALARM_FRAMES_1 = 150
 ALARM_FRAMES_2 = 60
 
@@ -106,7 +106,7 @@ while True:
         if pitch < PITCH_THRESH or (yaw < YAW_MIN or yaw > YAW_MAX) or abs(roll) > ROLL_THRESH:
             wobble_frames += 1
         else:
-            # Subtract 1 instead of resetting to 0
+            # Subtract 2 instead of resetting to 0
             wobble_frames -= 2
             # Make sure the counter never drops below 0
             if wobble_frames < 0:
@@ -156,6 +156,9 @@ while True:
     # Print Steering Telemetry above the wheel
     vol_color = (0, 255, 255) if volatility > 80 else (0, 255, 0)
     cv2.putText(img, f"Vol: {volatility}", (w - 140, h - 160), cv2.FONT_HERSHEY_SIMPLEX, 0.6, vol_color, 2)
+
+    # --- DEBUG DASHBOARD ---
+    cv2.putText(img, f"Pitch: {pitch:.2f} | Yaw: {yaw:.2f} | Roll: {int(roll)}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
     # Show the final merged frame
     cv2.imshow("Combined Advanced DMS", img)
