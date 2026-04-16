@@ -1,0 +1,17 @@
+{
+  "timestamp": 1776358638.922409,
+  "auto_engaged": false,
+  "manual_override": false,
+  "risk_score": 0,
+  "sleep_frames": 0,
+  "wobble_frames": 0,
+  "yawn_count": 0,
+  "volatility": 0,
+  "ear": 0.0,
+  "mar": 0.0,
+  "pitch": 0.0,
+  "yaw_face": 0.0,
+  "roll": 0.0,
+  "warnings": [],
+  "calibrated": false
+}

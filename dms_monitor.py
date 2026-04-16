@@ -8,12 +8,12 @@ from collections import deque
 
 import keyboard
 from cvzone.FaceMeshModule import FaceMeshDetector
-
+import pathlib
 
 # ============================================================
 # CONFIG
 # ============================================================
-STATE_FILE = "dms_state.json"
+STATE_FILE = pathlib.Path(__file__).parent / "dms_state.json"
 
 MAR_THRESH = 0.30
 ROLL_THRESH = 30
