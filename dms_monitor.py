@@ -297,7 +297,7 @@ while True:
         auto_engaged = True
 
     manual_override = False
-    if keyboard.is_pressed("m"):
+    if keyboard.is_pressed("x"):
         auto_engaged = False
         risk_score = 0
         risk_timer = 0
@@ -323,7 +323,7 @@ while True:
                 (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
     cv2.putText(img, f"Vol:{volatility}",
                 (w - 180, h - 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-    cv2.putText(img, "Press M for manual reset",
+    cv2.putText(img, "Press X for manual reset",
                 (20, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
 
     cv2.circle(img, wheel_center, wheel_radius, (255, 255, 255), 4)
