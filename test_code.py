@@ -1,41 +1,47 @@
 import csv
-import json
 import math
-import os
-import time
 import pathlib
+import time
 
 import numpy as np
 import fsds
+
 
 # ============================================================
 # CONFIG
 # ============================================================
 PATH_CSV = pathlib.Path(__file__).parent / "path.csv"
-STATE_FILE = "dms_state.json"
 VEHICLE_NAME = "FSCar"
 
 CONTROL_HZ = 20.0
 DT = 1.0 / CONTROL_HZ
 
-WHEELBASE = 1.5
-MAX_STEER_RAD = 0.50
-MIN_SPEED = 1.5
-MAX_SPEED = 4.0
+# Vehicle geometry
+WHEELBASE = 1.5  # meters
 
-STANLEY_K = 1.4
+# Path follower
+MAX_STEER_RAD = 0.60
+STANLEY_K = 1.6
 STANLEY_SOFT = 1.0
 
-KP = 0.40
-KI = 0.03
-KD = 0.01
+# Speed control
+MIN_SPEED = 1.2
+MAX_SPEED = 4.0
+SPEED_CURVATURE_GAIN = 18.0
 
+KP = 0.55
+KI = 0.04
+KD = 0.03
+
+# Path processing
 RESAMPLE_SPACING = 0.5
 CLOSED_PATH_THRESH = 2.0
 
 SEARCH_BEHIND = 5
 SEARCH_AHEAD = 100
+RELOCK_DIST_THRESH = 4.0
 
+# Finish logic
 MIN_PROGRESS_FOR_WRAP = 0.80
 STOP_NEAR_START_FRAC = 0.10
 STOP_STABLE_COUNT = 15
@@ -44,20 +50,18 @@ GOAL_TOL = 1.5
 GOAL_STOP_SPEED = 0.8
 
 # ============================================================
-# COMMAND SMOOTHING / RATE LIMITING
+# COMMAND SMOOTHING
 # ============================================================
-# Steering command is always normalized in [-1, 1]
-STEER_SMOOTH_ALPHA = 0.18        # lower = smoother
-MAX_STEER_STEP_PER_SEC = 1.8     # normalized steering units per second
+# Steering command sent to FSDS is normalized in [-1, 1]
+STEER_SMOOTH_ALPHA = 0.22
+MAX_STEER_STEP_PER_SEC = 2.0
+STEER_DEADBAND = 0.01
 
 # Signed longitudinal command:
-#   +1.0 = full throttle
-#   -1.0 = full brake
-DRIVE_SMOOTH_ALPHA = 0.15
-MAX_DRIVE_STEP_PER_SEC = 1.2
-
-# Small deadbands to avoid chatter
-STEER_DEADBAND = 0.01
+#   +1.0 => full throttle
+#   -1.0 => full brake
+DRIVE_SMOOTH_ALPHA = 0.18
+MAX_DRIVE_STEP_PER_SEC = 1.4
 DRIVE_DEADBAND = 0.02
 
 
@@ -98,15 +102,23 @@ def apply_deadband(x, band):
     return x
 
 
+def distance(x1, y1, x2, y2):
+    return math.hypot(x2 - x1, y2 - y1)
+
+
+# ============================================================
+# PATH LOADING / PROCESSING
+# ============================================================
 def load_path_csv(path_file):
     pts = []
-    with open(path_file, "r", newline="") as f:
+    with open(path_file, "r", newline="", encoding="utf-8") as f:
         reader = csv.reader(f)
         first = next(reader, None)
 
         if first is None:
             raise ValueError("path.csv is empty")
 
+        # Headered or headerless CSV supported
         try:
             pts.append((float(first[0]), float(first[1])))
         except Exception:
@@ -143,6 +155,7 @@ def resample_path(path, ds=0.5):
 
     x_new = np.interp(s_new, s, path[:, 0])
     y_new = np.interp(s_new, s, path[:, 1])
+
     return np.column_stack((x_new, y_new))
 
 
@@ -183,7 +196,7 @@ def compute_curvature(path):
     return kappa
 
 
-def make_speed_profile(curvature, vmin=MIN_SPEED, vmax=MAX_SPEED, gain=18.0):
+def make_speed_profile(curvature, vmin=MIN_SPEED, vmax=MAX_SPEED, gain=SPEED_CURVATURE_GAIN):
     v = vmax / (1.0 + gain * np.abs(curvature))
     return np.clip(v, vmin, vmax)
 
@@ -192,20 +205,6 @@ def is_closed_path(path):
     if len(path) < 3:
         return False
     return np.linalg.norm(path[0] - path[-1]) < CLOSED_PATH_THRESH
-
-
-def read_dms_state(retries=5, delay=0.005):
-    if not os.path.exists(STATE_FILE):
-        return None
-
-    for _ in range(retries):
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, PermissionError, OSError):
-            time.sleep(delay)
-
-    return None
 
 
 # ============================================================
@@ -235,7 +234,7 @@ class PID:
 
 
 class StanleyController:
-    def __init__(self, k=1.4, soft=1.0):
+    def __init__(self, k=1.6, soft=1.0):
         self.k = k
         self.soft = soft
 
@@ -248,21 +247,31 @@ class StanleyController:
                 idx = (last_idx + j) % n
                 candidate_indices.append(idx)
             candidate_indices = np.array(candidate_indices, dtype=int)
+
             local = path[candidate_indices]
             dx = local[:, 0] - front_x
             dy = local[:, 1] - front_y
             dist2 = dx * dx + dy * dy
             best_local = int(np.argmin(dist2))
             idx = int(candidate_indices[best_local])
+
+            dist_now = math.sqrt(dist2[best_local])
+            if dist_now > RELOCK_DIST_THRESH:
+                idx = int(np.argmin((path[:, 0] - front_x) ** 2 + (path[:, 1] - front_y) ** 2))
         else:
             start = max(0, last_idx - SEARCH_BEHIND)
             end = min(n, last_idx + SEARCH_AHEAD)
             local = path[start:end]
+
             dx = local[:, 0] - front_x
             dy = local[:, 1] - front_y
             dist2 = dx * dx + dy * dy
             best_local = int(np.argmin(dist2))
             idx = start + best_local
+
+            dist_now = math.sqrt(dist2[best_local])
+            if dist_now > RELOCK_DIST_THRESH:
+                idx = int(np.argmin((path[:, 0] - front_x) ** 2 + (path[:, 1] - front_y) ** 2))
 
         tx, ty = path[idx]
         path_yaw = headings[idx]
@@ -276,7 +285,7 @@ class StanleyController:
         steer = heading_error + math.atan2(self.k * cte, self.soft + speed)
         steer = clamp(steer, -MAX_STEER_RAD, MAX_STEER_RAD)
 
-        return steer, idx, cte, heading_error
+        return steer, idx, cte, heading_error, dist_now
 
 
 # ============================================================
@@ -311,6 +320,11 @@ def main():
     print("Loading path...")
     raw_path = load_path_csv(PATH_CSV)
     path = resample_path(raw_path, ds=RESAMPLE_SPACING)
+
+    # Drop duplicate final point if closed
+    if len(path) > 3 and np.linalg.norm(path[0] - path[-1]) < 0.2:
+        path = path[:-1]
+
     headings = compute_headings(path)
     curvature = compute_curvature(path)
     speed_profile = make_speed_profile(curvature)
@@ -321,17 +335,21 @@ def main():
     print("Connecting to FSDS...")
     client = fsds.FSDSClient()
     client.confirmConnection()
-    client.enableApiControl(False, VEHICLE_NAME)
-    print("FSDS connected. Waiting for DMS takeover request...")
+    client.enableApiControl(True, VEHICLE_NAME)
+    print("FSDS connected. Autonomous control enabled.")
 
     x0, y0, yaw0, _ = get_vehicle_state(client)
 
+    # Auto-reverse path if heading mismatch is large
     err_forward = abs(wrap_angle(headings[0] - yaw0))
-    err_reverse = abs(wrap_angle(wrap_angle(headings[-1] + math.pi) - yaw0))
+
+    reverse_path = path[::-1].copy()
+    reverse_headings = compute_headings(reverse_path)
+    err_reverse = abs(wrap_angle(reverse_headings[0] - yaw0))
 
     if err_reverse < err_forward:
-        path = path[::-1].copy()
-        headings = compute_headings(path)
+        path = reverse_path
+        headings = reverse_headings
         curvature = compute_curvature(path)
         speed_profile = make_speed_profile(curvature)
         print("Path reversed to match spawn heading.")
@@ -347,71 +365,31 @@ def main():
     stable_finish_count = 0
     lap_armed = False
     lap_done = False
-    in_auto = False
 
-    # Smoothed commands
-    smoothed_steer = 0.0       # normalized steering in [-1, 1]
-    smoothed_drive = 0.0       # signed drive command in [-1, 1]
+    smoothed_steer = 0.0
+    smoothed_drive = 0.0
 
-    while True:
-        t0 = time.perf_counter()
+    try:
+        while True:
+            t0 = time.perf_counter()
 
-        dms = read_dms_state()
-        auto_request = bool(dms and dms.get("auto_engaged", False))
-        manual_override = bool(dms and dms.get("manual_override", False))
-
-        if manual_override:
-            if in_auto:
-                print("[CTRL] Manual override received. Returning control.")
-            in_auto = False
-            lap_armed = False
-            lap_done = False
-            stable_finish_count = 0
-            lon.reset()
-            smoothed_steer = 0.0
-            smoothed_drive = 0.0
-            stop_vehicle(client)
-            client.enableApiControl(False, VEHICLE_NAME)
-
-        if auto_request and not in_auto:
-            print("[CTRL] DMS requested takeover. Enabling autonomous control.")
-            x, y, yaw, _ = get_vehicle_state(client)
-            d = np.hypot(path[:, 0] - x, path[:, 1] - y)
-            idx = int(np.argmin(d))
-            last_idx = idx
-            prev_idx = idx
-            lap_armed = False
-            lap_done = False
-            stable_finish_count = 0
-            lon.reset()
-            smoothed_steer = 0.0
-            smoothed_drive = 0.0
-            client.enableApiControl(True, VEHICLE_NAME)
-            in_auto = True
-
-        if not auto_request and in_auto:
-            print("[CTRL] DMS no longer requests takeover. Returning manual control.")
-            in_auto = False
-            lap_armed = False
-            lap_done = False
-            stable_finish_count = 0
-            lon.reset()
-            smoothed_steer = 0.0
-            smoothed_drive = 0.0
-            stop_vehicle(client)
-            client.enableApiControl(False, VEHICLE_NAME)
-
-        if in_auto:
             x, y, yaw, speed = get_vehicle_state(client)
 
+            # Use front axle point
             front_x = x + WHEELBASE * math.cos(yaw)
             front_y = y + WHEELBASE * math.sin(yaw)
 
-            steer_rad, idx, cte, he = lat.control(
-                x=x, y=y, yaw=yaw, speed=speed,
-                front_x=front_x, front_y=front_y,
-                path=path, headings=headings,
-                last_idx=last_idx, closed_loop=closed_loop
+            steer_rad, idx, cte, he, path_err = lat.control(
+                x=x,
+                y=y,
+                yaw=yaw,
+                speed=speed,
+                front_x=front_x,
+                front_y=front_y,
+                path=path,
+                headings=headings,
+                last_idx=last_idx,
+                closed_loop=closed_loop
             )
 
             n = len(path)
@@ -434,36 +412,46 @@ def main():
 
             target_speed = speed_profile[idx]
 
+            # Slow down if far from path
+            if path_err > 2.0:
+                target_speed = min(target_speed, 2.5)
+            if path_err > 4.0:
+                target_speed = min(target_speed, 1.5)
+
             if closed_loop:
                 if lap_done:
                     target_speed = min(target_speed, 2.0)
                     if idx < int(STOP_NEAR_START_FRAC * n):
                         target_speed = 0.0
             else:
-                dist_to_goal = math.hypot(path[-1, 0] - x, path[-1, 1] - y)
+                dist_to_goal = distance(x, y, path[-1, 0], path[-1, 1])
+
+               # Only begin end-of-path stopping once we are actually near the end by index
                 if progress_ratio > 0.90:
                     target_speed = min(target_speed, 3.0)
+
                 if progress_ratio > 0.97:
                     target_speed = min(target_speed, 1.5)
-                if progress_ratio > 0.995 or dist_to_goal < 2.0:
+
+                # Do NOT stop just because the car is physically near the last point early in the run
+                if progress_ratio > 0.995 and dist_to_goal < 2.0:
                     target_speed = 0.0
 
             # ------------------------------------------------
-            # Raw control requests
+            # Raw commands
             # ------------------------------------------------
             raw_steer_cmd = clamp(steer_rad / MAX_STEER_RAD, -1.0, 1.0)
 
             speed_error = target_speed - speed
             raw_drive_cmd = clamp(lon.step(speed_error, DT), -1.0, 1.0)
-            # +1 -> full throttle, -1 -> full brake
 
             # ------------------------------------------------
             # Smooth steering
             # ------------------------------------------------
-            smoothed_steer = low_pass(smoothed_steer, raw_steer_cmd, STEER_SMOOTH_ALPHA)
+            steer_lp = low_pass(smoothed_steer, raw_steer_cmd, STEER_SMOOTH_ALPHA)
             smoothed_steer = rate_limit(
                 smoothed_steer,
-                raw_steer_cmd,
+                steer_lp,
                 MAX_STEER_STEP_PER_SEC * DT
             )
             smoothed_steer = apply_deadband(smoothed_steer, STEER_DEADBAND)
@@ -472,33 +460,32 @@ def main():
             # ------------------------------------------------
             # Smooth signed drive command
             # ------------------------------------------------
-            smoothed_drive = low_pass(smoothed_drive, raw_drive_cmd, DRIVE_SMOOTH_ALPHA)
+            drive_lp = low_pass(smoothed_drive, raw_drive_cmd, DRIVE_SMOOTH_ALPHA)
             smoothed_drive = rate_limit(
                 smoothed_drive,
-                raw_drive_cmd,
+                drive_lp,
                 MAX_DRIVE_STEP_PER_SEC * DT
             )
             smoothed_drive = apply_deadband(smoothed_drive, DRIVE_DEADBAND)
             smoothed_drive = clamp(smoothed_drive, -1.0, 1.0)
 
-            # Convert signed drive command to FSDS throttle/brake
             throttle = max(0.0, smoothed_drive)
             brake = max(0.0, -smoothed_drive)
 
             ctrl = fsds.CarControls()
-            ctrl.steering = -1 * smoothed_steer
+            ctrl.steering = smoothed_steer
             ctrl.throttle = throttle
             ctrl.brake = brake
             client.setCarControls(ctrl, VEHICLE_NAME)
 
-            risk_txt = dms.get("risk_score", 0) if dms else 0
             print(
-                f"[AUTO] idx={idx}/{n-1} pos=({x:.2f},{y:.2f}) "
+                f"idx={idx}/{n-1} "
+                f"pos=({x:.2f},{y:.2f}) "
                 f"v={speed:.2f} vref={target_speed:.2f} "
                 f"raw_steer={raw_steer_cmd:.3f} steer={ctrl.steering:.3f} "
                 f"raw_drive={raw_drive_cmd:.3f} drive={smoothed_drive:.3f} "
                 f"thr={throttle:.3f} brk={brake:.3f} "
-                f"cte={cte:.3f} he={math.degrees(he):.1f}deg risk={risk_txt}"
+                f"cte={cte:.3f} he={math.degrees(he):.1f}deg err={path_err:.2f}"
             )
 
             if closed_loop:
@@ -508,7 +495,7 @@ def main():
                     stable_finish_count = 0
             else:
                 reached_last = idx >= n - 3
-                near_goal = math.hypot(path[-1, 0] - x, path[-1, 1] - y) < GOAL_TOL
+                near_goal = distance(x, y, path[-1, 0], path[-1, 1]) < GOAL_TOL
                 slow = speed < GOAL_STOP_SPEED
 
                 if reached_last and near_goal and slow:
@@ -517,23 +504,22 @@ def main():
                     stable_finish_count = 0
 
             if stable_finish_count >= STOP_STABLE_COUNT:
-                print("[CTRL] Path/lap complete. Holding brake, staying in AUTO until DMS reset.")
-                smoothed_steer = 0.0
-                smoothed_drive = -1.0
+                print("Path complete. Holding brake.")
                 stop_vehicle(client)
+                break
 
-        elapsed = time.perf_counter() - t0
-        try:
+            elapsed = time.perf_counter() - t0
             time.sleep(max(0.0, DT - elapsed))
-        except KeyboardInterrupt:
-            print("\n[CTRL] Interrupted by user.")
-            break
 
-    try:
-        stop_vehicle(client)
-        client.enableApiControl(False, VEHICLE_NAME)
-    except Exception:
-        pass
+    except KeyboardInterrupt:
+        print("\nInterrupted by user.")
+
+    finally:
+        try:
+            stop_vehicle(client)
+            client.enableApiControl(False, VEHICLE_NAME)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
