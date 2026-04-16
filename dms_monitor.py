@@ -22,11 +22,11 @@ ALARM_FRAMES_WOBBLE = 45
 ALARM_FRAMES_YAWN = 20
 
 WEIGHT_STEERING = 15
-WEIGHT_SLEEP = 10
-WEIGHT_WOBBLE = 5
+WEIGHT_SLEEP = 20
+WEIGHT_WOBBLE = 1
 WEIGHT_YAWN = 2
 
-RISK_THRESHOLD = 500
+RISK_THRESHOLD = 800
 RISK_RESET_FRAMES = 300
 
 TURN_SPEED = 8
@@ -205,12 +205,13 @@ while True:
 
     # Fake steering volatility using keyboard taps
     if keyboard.is_pressed("left"):
-        current_angle -= TURN_SPEED
+        current_angle = -180
     if keyboard.is_pressed("right"):
-        current_angle += TURN_SPEED
+        current_angle = 180
     current_angle = max(-MAX_ANGLE, min(MAX_ANGLE, current_angle))
 
     delta = abs(current_angle - prev_angle)
+    print(current_angle, prev_angle, delta)
     angle_changes.append(delta)
     prev_angle = current_angle
     volatility = sum(angle_changes)
@@ -252,12 +253,12 @@ while True:
             sleep_frames = max(0, sleep_frames - 1)
 
         if mar > MAR_THRESH:
-            yawn_frames += 1
+            yawn_frames += 0
         else:
             yawn_frames = 0
 
         if yawn_frames > ALARM_FRAMES_YAWN:
-            yawn_numbers += 1
+            yawn_numbers += 0
             yawn_frames = 0
 
         if ((pitch < 0.67 * PITCH_THRESH or pitch > 3 * PITCH_THRESH) or
@@ -279,7 +280,7 @@ while True:
         warnings.append("WARNING: EXCESSIVE YAWNING")
         current_frame_risk += WEIGHT_YAWN
 
-    if volatility > 180:
+    if volatility > 2000:
         warnings.append("DANGER: ERRATIC STEERING")
         current_frame_risk += WEIGHT_STEERING
 
@@ -297,7 +298,7 @@ while True:
         auto_engaged = True
 
     manual_override = False
-    if keyboard.is_pressed("m"):
+    if keyboard.is_pressed("x"):
         auto_engaged = False
         risk_score = 0
         risk_timer = 0
@@ -323,7 +324,7 @@ while True:
                 (20, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, mode_color, 2)
     cv2.putText(img, f"Vol:{volatility}",
                 (w - 180, h - 130), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
-    cv2.putText(img, "Press M for manual reset",
+    cv2.putText(img, "Press X for manual reset",
                 (20, h - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (200, 200, 200), 2)
 
     cv2.circle(img, wheel_center, wheel_radius, (255, 255, 255), 4)
