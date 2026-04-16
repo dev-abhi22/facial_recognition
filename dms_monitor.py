@@ -179,7 +179,7 @@ while True:
 EAR_THRESH = sum(ear_vals) / max(len(ear_vals), 1)
 PITCH_THRESH = sum(pitch_vals) / max(len(pitch_vals), 1)
 YAW_BASE = sum(yaw_vals) / max(len(yaw_vals), 1)
-YAW_MIN = YAW_BASE * 0.2
+YAW_MIN = YAW_BASE * 0.5
 YAW_MAX = YAW_BASE * 1.8
 
 print(f"Calibration complete: EAR={EAR_THRESH:.3f}, PITCH={PITCH_THRESH:.3f}, YAW={YAW_BASE:.3f}")
@@ -247,7 +247,7 @@ while True:
         leo, reo = face[33], face[263]
         roll = math.degrees(math.atan2(reo[1] - leo[1], reo[0] - leo[0]))
 
-        if avg_ear < 0.8 * EAR_THRESH:
+        if avg_ear < 0.9 * EAR_THRESH:
             sleep_frames += 1
         else:
             sleep_frames = max(0, sleep_frames - 1)
