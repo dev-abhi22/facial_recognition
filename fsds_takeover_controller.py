@@ -10,12 +10,12 @@ import pathlib
 # CONFIG
 # ============================================================
 BASE_DIR = pathlib.Path(__file__).parent
-PATH_CSV = BASE_DIR / "path.csv"
+PATH_CSV = BASE_DIR / "recorded_path_test2.csv"
 STATE_FILE = BASE_DIR / "dms_state.json"
 VEHICLE_NAME = "FSCar"
 
 WHEELBASE = 1.5
-TARGET_SPEED = 9.0
+TARGET_SPEED = 5.0
 MAX_STEER_RAD = 0.4363
 
 LD_MIN = 1.0

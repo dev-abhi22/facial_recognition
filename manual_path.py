@@ -11,7 +11,7 @@ import fsds
 # CONFIG
 # ============================================================
 VEHICLE_NAME = "FSCar"
-OUTPUT_CSV = pathlib.Path(__file__).parent / "recorded_path.csv"
+OUTPUT_CSV = pathlib.Path(__file__).parent / "recorded_path_test2.csv"
 
 SAMPLE_PERIOD_SEC = 0.5
 MIN_POINT_DISTANCE_M = 0.3
