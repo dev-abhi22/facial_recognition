@@ -10,7 +10,7 @@ import pathlib
 # CONFIG
 # ============================================================
 BASE_DIR = pathlib.Path(__file__).parent
-PATH_CSV = BASE_DIR / "recorded_path_test2.csv"
+PATH_CSV = BASE_DIR / "path.csv"
 STATE_FILE = BASE_DIR / "dms_state.json"
 VEHICLE_NAME = "FSCar"
 
